@@ -7,6 +7,8 @@ import trimesh
 import open3d as o3d
 from torchvision import transforms
 from PIL import Image
+import time
+import multiprocessing as mp
 
 # --- Fix sys.path for local imports ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +21,8 @@ from fathomnet.api import images
 from utils import get_best_crop_image
 from GenAI_image_generator import text_to_image
 from hy3dgen.rembg import BackgroundRemover
-
+from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+from hy3dgen.texgen import Hunyuan3DPaintPipeline
 
 # ------------------ MEMORY CLEANUP ------------------
 def clean_memory():
@@ -28,6 +31,45 @@ def clean_memory():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
+# ------------------ MESH GENERATION ------------------
+def generate_mesh(image, save_path, mesh_pipeline = None):
+    """Runs mesh generation pipeline in a separate process"""
+    if mesh_pipeline is None:
+        mesh_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+            'tencent/Hunyuan3D-2',
+            subfolder='hunyuan3d-dit-v2-0',
+            use_safetensors=False,
+            variant='fp16',
+            runtime=True,
+        )
+    mesh_pipeline.enable_model_cpu_offload(device="cuda")
+
+    print("Mesh model loaded successfully")
+    tic = time.time()
+
+    mesh = mesh_pipeline(image=image)[0]
+
+    # Cleanup mesh with Open3D
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh.vertices)
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh.faces)
+
+    simplified = o3d_mesh.simplify_quadric_decimation(50000)
+    simplified.remove_unreferenced_vertices()
+    o3d_mesh = simplified.remove_degenerate_triangles()
+    o3d_mesh = o3d_mesh.remove_duplicated_triangles()
+    o3d_mesh = o3d_mesh.remove_duplicated_vertices()
+    o3d_mesh = o3d_mesh.remove_non_manifold_edges()
+
+    decimated_mesh = trimesh.Trimesh(
+        vertices=np.asarray(o3d_mesh.vertices),
+        faces=np.asarray(o3d_mesh.triangles),
+        process=False
+    )
+    decimated_mesh.export(save_path)
+
+    clean_memory()
+    return save_path
 
 # ------------------ MAIN FUNCTION ------------------
 def generate_3d(
@@ -50,8 +92,6 @@ def generate_3d(
     Returns:
         dict: Paths to exported meshes {"raw_mesh": ..., "painted_mesh": ..., "image": ...}
     """
-    if mesh_pipeline is None or paint_pipeline is None:
-        raise ValueError("mesh_pipeline and paint_pipeline must be provided.")
 
     # Make sure output folder exists inside project root
     output_dir = os.path.join(PROJECT_ROOT, output_dir)
@@ -110,7 +150,11 @@ def generate_3d(
     image.save(image_path)
 
     # ------------------ MESH GENERATION ------------------
-    img_mesh = mesh_pipeline(image=image)[0]
+    raw_mesh_path = os.path.join(output_dir, "mesh.glb")
+    mesh_proc = mp.Process(target=generate_mesh, args=(image, output_dir, mesh_pipeline))
+    mesh_proc.start()
+    mesh_proc.join()
+    img_mesh = trimesh.load(raw_mesh_path)
 
     if isinstance(img_mesh, trimesh.Scene):
         meshes = [g for g in img_mesh.geometry.values()]
@@ -123,8 +167,14 @@ def generate_3d(
     o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh.vertices)
     o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh.faces)
 
-    target_faces = int(len(mesh.faces) * 0.1)  # 90% reduction
+    target_faces = 50000
     simplified = o3d_mesh.simplify_quadric_decimation(target_faces)
+    
+    simplified.remove_unreferenced_vertices()
+    simplified = simplified.remove_degenerate_triangles()
+    simplified = simplified.remove_duplicated_triangles()
+    simplified = simplified.remove_duplicated_vertices()
+    simplified = simplified.remove_non_manifold_edges()
 
     decimated_mesh = trimesh.Trimesh(
         vertices=np.asarray(simplified.vertices),
@@ -134,12 +184,7 @@ def generate_3d(
 
     # ------------------ PAINTING ------------------
     painted_mesh = paint_pipeline(decimated_mesh, image=image)
-
-    # ------------------ EXPORT ------------------
-    raw_mesh_path = os.path.join(output_dir, "mesh.glb")
     painted_mesh_path = os.path.join(output_dir, "painted.glb")
-
-    mesh.export(raw_mesh_path)
     painted_mesh.export(painted_mesh_path)
 
     clean_memory()

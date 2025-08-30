@@ -22,33 +22,38 @@ DEVICE = torch.device(
     else ("cuda:0" if torch.cuda.is_available() else "cpu")
 )
 
-# TEMP for pipeline, swap commented and uncommented code
 
+# TEMP for custom download paths, uncomment following code
 #MESH_PIPELINE = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
 #    os.path.join(PROJECT_ROOT, 'models'),
 #    device=DEVICE
 #)
-
-MESH_PIPELINE = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-    'tencent/Hunyuan3D-2',
-    subfolder='hunyuan3d-dit-v2-0',
-    variant='fp16',
-    device = DEVICE,
-    runtime=True
-)
 
 # PAINT_PIPELINE = Hunyuan3DPaintPipeline.from_pretrained(
 #    os.path.join(PROJECT_ROOT, 'models'),
 #    subfolder='hunyuan3d-paint-v2-0-turbo'
 #)
 
-PAINT_PIPELINE = Hunyuan3DPaintPipeline.from_pretrained(
-    'tencent/Hunyuan3D-2',
-    subfolder='hunyuan3d-paint-v2-0-turbo',
-    runtime=True
-)
 
-print("[INFO] Models loaded successfully.")
+# TEMP With higher RAM allowance, uncomment following code to increase inferecence speed
+# MESH_PIPELINE = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+#     'tencent/Hunyuan3D-2',
+#     subfolder='hunyuan3d-dit-v2-0',
+#     variant='fp16',
+#     device = DEVICE,
+#     runtime=True
+# )
+
+# PAINT_PIPELINE = Hunyuan3DPaintPipeline.from_pretrained(
+#     'tencent/Hunyuan3D-2',
+#     subfolder='hunyuan3d-paint-v2-0-turbo',
+#     runtime=True
+# )
+
+
+# TEMP loading at runtime to save RAM, uncomment following code to run mesh pipeline and paint in separate processes
+MESH_PIPELINE = None
+PAINT_PIPELINE = None
 
 # -------------------------------
 # Flask app
@@ -60,6 +65,7 @@ def generate():
     data = request.get_json(force=True)
     concept = data.get("concept")
     method = data.get("method", "genai")
+    output = data.get("output") # Optional field for unity based extra output
 
     if not concept:
         return jsonify({"error": "Missing 'concept' field"}), 400
@@ -69,9 +75,10 @@ def generate():
         result_paths = generate_3d(
             concept=concept,
             method=method,
+            output=output,
             output_dir=os.path.join(PROJECT_ROOT, "output_assets"),
             mesh_pipeline=MESH_PIPELINE,
-            paint_pipeline=PAINT_PIPELINE
+            paint_pipeline=PAINT_PIPELINE,
         )
         return jsonify({"status": "done", "results": result_paths}), 200
     except Exception as e:

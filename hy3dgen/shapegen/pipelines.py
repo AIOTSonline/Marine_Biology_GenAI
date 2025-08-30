@@ -26,6 +26,7 @@ from PIL import Image
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.utils.import_utils import is_accelerate_version, is_accelerate_available
 from tqdm import tqdm
+import gc
 
 from .models.autoencoders import ShapeVAE
 from .models.autoencoders import SurfaceExtractors
@@ -169,14 +170,17 @@ class Hunyuan3DDiTPipeline:
         # load model
         model = instantiate_from_config(config['model'])
         model.load_state_dict(ckpt['model'])
+        del ckpt['model']
         vae = instantiate_from_config(config['vae'])
         vae.load_state_dict(ckpt['vae'])
+        del ckpt['vae']
         conditioner = instantiate_from_config(config['conditioner'])
         if 'conditioner' in ckpt:
             conditioner.load_state_dict(ckpt['conditioner'])
+            del ckpt['conditioner']
         image_processor = instantiate_from_config(config['image_processor'])
         scheduler = instantiate_from_config(config['scheduler'])
-
+        gc.collect()
         model_kwargs = dict(
             vae=vae,
             model=model,
@@ -246,6 +250,19 @@ class Hunyuan3DDiTPipeline:
         self.image_processor = image_processor
         self.kwargs = kwargs
         self.to(device, dtype)
+    
+    @property
+    def components(self):
+        """
+        HuggingFace-style components registry used by offload utils.
+        Only include torch.nn.Module instances that you want offloaded.
+        """
+        comps = {
+            "vae": self.vae,
+            "model": self.model,
+            "conditioner": self.conditioner,
+        }
+        return comps
 
     def compile(self):
         self.vae = torch.compile(self.vae)
@@ -752,7 +769,7 @@ class Hunyuan3DDiTFlowMatchingPipeline(Hunyuan3DDiTPipeline):
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
-                outputs = self.scheduler.step(noise_pred, t, latents)
+                outputs = self.scheduler.step(noise_pred.to(latents.device), t.to(latents.device), latents)
                 latents = outputs.prev_sample
 
                 if callback is not None and i % callback_steps == 0:

@@ -18,8 +18,16 @@ import random
 import numpy as np
 import torch
 from typing import List
-from diffusers import DiffusionPipeline
-from diffusers import EulerAncestralDiscreteScheduler, LCMScheduler
+from diffusers import (
+    AutoencoderKL,
+    DDPMScheduler,
+    EulerAncestralDiscreteScheduler,
+    LCMScheduler
+)
+from transformers import CLIPImageProcessor, CLIPTokenizer
+
+from hy3dgen.texgen.hunyuanpaint.pipeline import HunyuanPaintPipeline
+from hy3dgen.texgen.hunyuanpaint.unet.modules import UNet2p5DConditionModel    
 
 
 class Multiview_Diffusion_Net():
@@ -28,12 +36,31 @@ class Multiview_Diffusion_Net():
         self.view_size = 512
         multiview_ckpt_path = config.multiview_ckpt_path
 
-        current_file_path = os.path.abspath(__file__)
-        custom_pipeline_path = os.path.join(os.path.dirname(current_file_path), '..', 'hunyuanpaint')
-
-        pipeline = DiffusionPipeline.from_pretrained(
+        unet = UNet2p5DConditionModel.from_pretrained(
+            f"{multiview_ckpt_path}/unet",
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True
+        )# Requires upto 16gb of ram on loading but mellows out afterwords Also this is the biggest model pretty much among all of them (8Gbs) 
+        vae = AutoencoderKL.from_pretrained(
+            f"{multiview_ckpt_path}/vae",
+            torch_dtype=torch.float16,
+            use_safetensors=False 
+        ) # Another big model but nearly 1 gb only
+        text_encoder = None
+        tokenizer = None
+        scheduler = DDPMScheduler.from_pretrained(
             multiview_ckpt_path,
-            custom_pipeline=custom_pipeline_path, torch_dtype=torch.float16)
+            torch_dtype=torch.float16,
+            subfolder="scheduler",
+        )          
+        feature_extractor = None
+        pipeline = HunyuanPaintPipeline(vae = vae,
+                                        text_encoder = text_encoder,
+                                        tokenizer = tokenizer,
+                                        unet = unet,
+                                        scheduler = scheduler,
+                                        feature_extractor = feature_extractor,
+        )
 
         if config.pipe_name in ['hunyuanpaint']:
             pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config,

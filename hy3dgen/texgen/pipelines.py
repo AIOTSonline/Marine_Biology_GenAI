@@ -29,11 +29,15 @@ from .utils.uv_warp_utils import mesh_uv_wrap
 
 logger = logging.getLogger(__name__)
 
+import gc
+import sys
+import multiprocessing as mp
+import pickle
 
 class Hunyuan3DTexGenConfig:
 
     def __init__(self, light_remover_ckpt_path, multiview_ckpt_path, subfolder_name):
-        self.device = 'cuda'
+        self.device = 'cuda' 
         self.light_remover_ckpt_path = light_remover_ckpt_path
         self.multiview_ckpt_path = multiview_ckpt_path
 
@@ -50,7 +54,61 @@ class Hunyuan3DTexGenConfig:
         self.pipe_name = self.pipe_dict[subfolder_name]
 
 
+# Model worker functions for multiprocessing
+def _delight_worker(config, images_prompt, save_path, enable_cpu_offload=False, gpu_id=None, device='cuda'):
+    print("Delight model loading...")
+    delighter_model = Light_Shadow_Remover(config)
+    if enable_cpu_offload:
+        delighter_model.pipeline.enable_model_cpu_offload(gpu_id=gpu_id, device=device)
+    else:
+        delighter_model.to(device)
+    
+    images_prompt = [delighter_model(image_prompt) for image_prompt in images_prompt]
+    with open(save_path, "wb") as f:
+        pickle.dump(images_prompt, f)
+
+    print(f"Results saved at {save_path}")
+
+def _multiview_worker(config, images_prompt, normal_maps, position_maps, camera_info, save_path, enable_cpu_offload=False, gpu_id=None, device='cuda'):
+    print("Multiview model loading...")
+    multiview_model = Multiview_Diffusion_Net(config)
+    if enable_cpu_offload:
+        multiview_model.pipeline.enable_model_cpu_offload(gpu_id=gpu_id, device=device)
+    else:
+        multiview_model.to(device)
+    
+    multiviews = multiview_model(images_prompt, normal_maps + position_maps, camera_info)
+    with open(save_path, "wb") as f:
+        pickle.dump(multiviews, f)
+
+    print(f"Results saved at {save_path}")
+
+
 class Hunyuan3DPaintPipeline:
+    def run_delight_in_process(self, images_prompt, save_path="/tmp/memory_results.pkl"):
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        p = mp.Process(target=_delight_worker, args=(self.config, images_prompt, save_path, self.to_enable_model_cpu_offload, self.gpu_id, self.device))
+        p.start()
+        p.join()
+        if os.path.exists(save_path):
+            with open(save_path, "rb") as f:
+                results = pickle.load(f)
+            return results
+        os.remove(save_path)
+        return None
+
+    def run_multiview_in_process(self, images_prompt, normal_maps, position_maps, camera_info, save_path="/tmp/memory_results.pkl"):
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        p = mp.Process(target=_multiview_worker, args=(self.config, images_prompt, normal_maps, position_maps, camera_info, save_path, self.to_enable_model_cpu_offload, self.gpu_id, self.device))
+        p.start()
+        p.join()
+        if os.path.exists(save_path):
+            with open(save_path, "rb") as f:
+                results = pickle.load(f)
+            return results
+        os.remove(save_path)
+        return None
+    
     @classmethod
     def from_pretrained(cls, model_path, subfolder='hunyuan3d-paint-v2-0-turbo', runtime=False):
         if runtime:
@@ -103,24 +161,17 @@ class Hunyuan3DPaintPipeline:
     def __init__(self, config):
         self.config = config
         self.models = {}
+        self.gpu_id = 0
+        self.device = self.config.device
         self.render = MeshRender(
             default_resolution=self.config.render_size,
             texture_size=self.config.texture_size)
-
-        self.load_models()
-
-    def load_models(self):
-        # empty cude cache
-        torch.cuda.empty_cache()
-        # Load model
-        self.models['delight_model'] = Light_Shadow_Remover(self.config)
-        self.models['multiview_model'] = Multiview_Diffusion_Net(self.config)
-        # self.models['super_model'] = Image_Super_Net(self.config)
-
+        
     def enable_model_cpu_offload(self, gpu_id: Optional[int] = None, device: Union[torch.device, str] = "cuda"):
-        self.models['delight_model'].pipeline.enable_model_cpu_offload(gpu_id=gpu_id, device=device)
-        self.models['multiview_model'].pipeline.enable_model_cpu_offload(gpu_id=gpu_id, device=device)
-
+        self.to_enable_model_cpu_offload = True
+        self.gpu_id = gpu_id
+        self.device = device
+        
     def render_normal_multiview(self, camera_elevs, camera_azims, use_abs_coor=True):
         normal_maps = []
         for elev, azim in zip(camera_elevs, camera_azims):
@@ -216,7 +267,9 @@ class Hunyuan3DPaintPipeline:
             
         images_prompt = [self.recenter_image(image_prompt) for image_prompt in images_prompt]
 
-        images_prompt = [self.models['delight_model'](image_prompt) for image_prompt in images_prompt]
+        images_prompt_checker = self.run_delight_in_process(images_prompt)
+        if images_prompt_checker is not None:
+            images_prompt = images_prompt_checker
 
         mesh = mesh_uv_wrap(mesh)
 
@@ -233,7 +286,8 @@ class Hunyuan3DPaintPipeline:
         camera_info = [(((azim // 30) + 9) % 12) // {-20: 1, 0: 1, 20: 1, -90: 3, 90: 3}[
             elev] + {-20: 0, 0: 12, 20: 24, -90: 36, 90: 40}[elev] for azim, elev in
                        zip(selected_camera_azims, selected_camera_elevs)]
-        multiviews = self.models['multiview_model'](images_prompt, normal_maps + position_maps, camera_info)
+        
+        multiviews = self.run_multiview_in_process(images_prompt, normal_maps, position_maps, camera_info)
 
         for i in range(len(multiviews)):
             # multiviews[i] = self.models['super_model'](multiviews[i])
