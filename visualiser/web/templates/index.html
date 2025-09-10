@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marine Forge - 3D Marine Life Generation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto:wght@300;400&display=swap" rel="stylesheet">
+
+    <!-- Three.js + Controls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <canvas id="bg-canvas"></canvas>
+
+    <!-- Main Prompt Page -->
+    <main id="prompt-page" class="visible-page min-h-screen w-full flex flex-col items-center justify-center p-4">
+        <div class="glass-pane rounded-2xl p-8 md:p-12 w-full max-w-2xl text-center shadow-2xl">
+            <h1 class="font-orbitron text-4xl md:text-6xl font-bold mb-2 text-white">Marine Forge</h1>
+            <p class="text-lg md:text-xl text-gray-400 mb-8">Crafting life like 3d assets of Marine animals from user prompts</p>
+            <div class="w-full mb-6">
+                <textarea id="prompt" rows="4" class="w-full p-4 rounded-lg text-lg bg-black bg-opacity-20 text-white border border-white/10 focus:ring-2 focus:ring-indigo-500 transition duration-300" placeholder="e.g., A dumbo octopus"></textarea>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button id="generate-btn" class="btn-primary font-bold py-3 px-6 rounded-lg text-lg w-full">Generate with GenAI</button>
+                <button id="fetch-btn" class="btn-secondary font-bold py-3 px-6 rounded-lg text-lg w-full">Fetch from Library</button>
+            </div>
+        </div>
+    </main>
+
+    <!-- 3D Viewer Page -->
+    <section id="viewer-page" class="hidden-page min-h-screen w-full flex-col items-center justify-center p-4 relative">
+        <button id="back-btn" class="absolute top-6 left-6 text-white bg-white bg-opacity-10 p-3 rounded-full hover:bg-opacity-20 transition z-20">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+        </button>
+        <div id="viewer-container" class="absolute top-0 left-0 w-full h-full z-10" style="display: none;"></div>
+        <div id="loader-container" class="absolute top-0 left-0 w-full h-full flex items-center justify-center z-0">
+             <div class="flex flex-col items-center justify-center text-center p-8 glass-pane rounded-2xl">
+                <div id="loader"></div>
+                <p id="loader-text" class="mt-4 text-lg font-orbitron">Forging Your Asset...</p>
+            </div>
+        </div>
+    </section>
+    
+    <script>
+        const SERVER_URL = "{{ server_url }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/viewer.js') }}"></script>
+</body>
+</html>

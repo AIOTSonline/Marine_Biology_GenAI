@@ -14,8 +14,7 @@ import torch.fft as fft
 from PIL import Image
 from torchvision import transforms
 from typing_extensions import Self
-from fathomnet.api import images
-from utils import get_best_crop_image
+from txt2_3D.utils import get_best_crop_image
 
 
 # --- Utility functions ---

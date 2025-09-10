@@ -1,3 +1,5 @@
+import os
+import sys
 import requests
 import numpy as np
 import cv2
@@ -5,6 +7,19 @@ import torch
 from PIL import Image
 from torchvision import transforms
 from fathomnet.api import images
+import gc
+import time
+import torch
+import numpy as np
+import open3d as o3d
+import trimesh
+
+# --- Fix sys.path for local imports ---
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+sys.path.append(PROJECT_ROOT)
+
+from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
 # Assumes `model`, `sr_transform`, and `device` are defined globally
 # You will need to ensure they are initialized before calling these functions.
@@ -115,3 +130,51 @@ def get_all_cropped_images(concept):
             continue
 
     return sorted(results, key=lambda x: x[0], reverse=True)
+
+
+# ------------------ MEMORY CLEANUP ------------------
+def clean_memory():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+# ------------------ MESH GENERATION ------------------
+def generate_mesh(image, save_path, mesh_pipeline = None, runtime):
+    """Runs mesh generation pipeline in a separate process"""
+    if mesh_pipeline is None:
+        mesh_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+            'tencent/Hunyuan3D-2',
+            subfolder='hunyuan3d-dit-v2-0',
+            use_safetensors=False,
+            variant='fp16',
+            runtime=runtime,
+        )
+    mesh_pipeline.enable_model_cpu_offload(device="cuda")
+
+    print("Mesh model loaded successfully")
+    tic = time.time()
+
+    mesh = mesh_pipeline(image=image)[0]
+
+    # Cleanup mesh with Open3D
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh.vertices)
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh.faces)
+
+    simplified = o3d_mesh.simplify_quadric_decimation(50000)
+    simplified.remove_unreferenced_vertices()
+    o3d_mesh = simplified.remove_degenerate_triangles()
+    o3d_mesh = o3d_mesh.remove_duplicated_triangles()
+    o3d_mesh = o3d_mesh.remove_duplicated_vertices()
+    o3d_mesh = o3d_mesh.remove_non_manifold_edges()
+
+    decimated_mesh = trimesh.Trimesh(
+        vertices=np.asarray(o3d_mesh.vertices),
+        faces=np.asarray(o3d_mesh.triangles),
+        process=False
+    )
+    decimated_mesh.export(save_path)
+
+    clean_memory()
+    return save_path

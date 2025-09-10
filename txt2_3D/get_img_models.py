@@ -1,6 +1,4 @@
-from huggingface_hub import snapshot_download
-
-from huggingface_hub import login
+from huggingface_hub import login, snapshot_download
 
 # To be prompted for your token in the terminal or a notebook widget:
 login(token="") # enter your token
@@ -15,5 +13,18 @@ snapshot_download(
     local_dir=save_dir,
     local_dir_use_symlinks=False  # Make actual copies instead of symlinks
 )
+# Repo ID for the NF4-quantized T5 encoder
+repo_id = "diffusers/t5-nf4"
 
+# Destination folder
+local_dir = "models/t5-nf4"
+
+# Download the full repo into models/t5-nf4
+snapshot_download(
+    repo_id=repo_id,
+    local_dir=local_dir,
+    local_dir_use_symlinks=False  # ensures actual files instead of symlinks
+)
+
+print("T5 NF4 model downloaded to:", local_dir)
 print(f"Model fully downloaded to: {save_dir}")

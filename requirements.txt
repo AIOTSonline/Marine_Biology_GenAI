@@ -1,40 +1,36 @@
+# System dependencies (install via OS package manager)
 ninja
 pybind11
 
+# Core packages
 diffusers
+peft==0.15.0
+bitsandbytes
+fathomnet
+open3d
+transformers
+accelerate
+torch
+torchvision
+numpy
 einops
 opencv-python
-numpy
-torch
-transformers
-torchvision
-#taming-transformers-rom1504
-#ConfigArgParse
-#ipdb
-omegaconf
-
-#sentencepiece
 tqdm
+omegaconf
 
 # Mesh Processing
 trimesh
 pymeshlab
 pygltflib
 xatlas
-#kornia
-#facexlib
 
 # Training
-accelerate
-#pytorch_lightning
-#scikit-learn
-#scikit-image
+scikit-learn
+scikit-image
 
-# Demo only
+# Demo / Web
 gradio
 fastapi
 uvicorn
 rembg
 onnxruntime
-#gevent
-#geventhttpclient

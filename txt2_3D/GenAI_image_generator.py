@@ -16,7 +16,7 @@ def clean_memory():
 
 
 # ------------------ LOAD PIPELINE ------------------
-def load_pipeline(model_path="models/stable-diffusion-3.5-large-turbo"):
+def load_pipeline(model_path = "stabilityai/stable-diffusion-3.5-large-turbo" , local=False):
     """
     Loads Stable Diffusion 3.5 pipeline from a local folder
     with NF4 quantization and CPU offloading.
@@ -27,12 +27,15 @@ def load_pipeline(model_path="models/stable-diffusion-3.5-large-turbo"):
         bnb_4bit_compute_dtype=torch.bfloat16
     )
 
-    model_id = "stabilityai/stable-diffusion-3.5-large-turbo" #TEMP_ Testing
+    t5_path = "diffusers/t5-nf4"
+
+    if local == True:
+        model_path="models/stable-diffusion-3.5-large-turbo"
+        t5_path = "models/t5-nf4"
 
     # Load transformer with 4-bit quantization
     model_nf4 = SD3Transformer2DModel.from_pretrained(
-        # model_path,
-        model_id, #TEMP_ Testing
+        model_path,
         subfolder="transformer",
         quantization_config=nf4_config,
         torch_dtype=torch.bfloat16
@@ -40,15 +43,13 @@ def load_pipeline(model_path="models/stable-diffusion-3.5-large-turbo"):
 
     # Load T5 text encoder in 4-bit
     t5_nf4 = T5EncoderModel.from_pretrained(
-        # "models/t5-nf4",   # <-- also local version (downloaded & placed in models folder)
-        "diffusers/t5-nf4", #TEMP_ Testing
+        t5_path,
         torch_dtype=torch.bfloat16
     )
 
     # Final pipeline with offloading
     pipeline = StableDiffusion3Pipeline.from_pretrained(
-        # model_path,
-        model_id, #TEMP_ Testing
+        model_path,
         transformer=model_nf4,
         text_encoder_3=t5_nf4,
         torch_dtype=torch.bfloat16
@@ -60,13 +61,13 @@ def load_pipeline(model_path="models/stable-diffusion-3.5-large-turbo"):
 # ------------------ TEXT TO IMAGE FUNCTION ------------------
 def text_to_image(prompt, output_path="generated.png", 
                   negative_prompt=None, steps=28, guidance=7.0,
-                  model_path="models/stable-diffusion-3.5-large-turbo"):
+                  model_path = "stabilityai/stable-diffusion-3.5-large-turbo" , local=False):
     """
     Generate a 2D image from text prompt using Stable Diffusion 3.5 (local model).
     """
     clean_memory()
     
-    pipe = load_pipeline(model_path)
+    pipe = load_pipeline(model_path, local)
 
     image = pipe(
         prompt=prompt,
@@ -77,7 +78,7 @@ def text_to_image(prompt, output_path="generated.png",
 
     image.save(output_path)
     print(f" Image saved at {output_path}")
-
+    return image
 
 # ------------------ EXAMPLE USAGE ------------------
 if __name__ == "__main__":
@@ -94,9 +95,10 @@ if __name__ == "__main__":
         "underwater scene, ocean background, noisy background."
     )
 
-    text_to_image(
+    best_image = text_to_image(
         positive_prompt, 
         "dumbo_octopus_reference.png", 
         negative_prompt,
         model_path="models/stable-diffusion-3.5-large-turbo"  # local model path
     )
+    print('done')

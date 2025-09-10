@@ -16,60 +16,14 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 sys.path.append(PROJECT_ROOT)
 
 # Custom imports
-from Image_generator import mymodel
+from txt2_3D.Image_generator import mymodel
 from fathomnet.api import images
-from utils import get_best_crop_image
-from GenAI_image_generator import text_to_image
+from txt2_3D.utils import get_best_crop_image, generate_mesh, clean_memory
+from txt2_3D.GenAI_image_generator import text_to_image
 from hy3dgen.rembg import BackgroundRemover
 from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 from hy3dgen.texgen import Hunyuan3DPaintPipeline
 
-# ------------------ MEMORY CLEANUP ------------------
-def clean_memory():
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-
-# ------------------ MESH GENERATION ------------------
-def generate_mesh(image, save_path, mesh_pipeline = None):
-    """Runs mesh generation pipeline in a separate process"""
-    if mesh_pipeline is None:
-        mesh_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-            'tencent/Hunyuan3D-2',
-            subfolder='hunyuan3d-dit-v2-0',
-            use_safetensors=False,
-            variant='fp16',
-            runtime=True,
-        )
-    mesh_pipeline.enable_model_cpu_offload(device="cuda")
-
-    print("Mesh model loaded successfully")
-    tic = time.time()
-
-    mesh = mesh_pipeline(image=image)[0]
-
-    # Cleanup mesh with Open3D
-    o3d_mesh = o3d.geometry.TriangleMesh()
-    o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh.vertices)
-    o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh.faces)
-
-    simplified = o3d_mesh.simplify_quadric_decimation(50000)
-    simplified.remove_unreferenced_vertices()
-    o3d_mesh = simplified.remove_degenerate_triangles()
-    o3d_mesh = o3d_mesh.remove_duplicated_triangles()
-    o3d_mesh = o3d_mesh.remove_duplicated_vertices()
-    o3d_mesh = o3d_mesh.remove_non_manifold_edges()
-
-    decimated_mesh = trimesh.Trimesh(
-        vertices=np.asarray(o3d_mesh.vertices),
-        faces=np.asarray(o3d_mesh.triangles),
-        process=False
-    )
-    decimated_mesh.export(save_path)
-
-    clean_memory()
-    return save_path
 
 # ------------------ MAIN FUNCTION ------------------
 def generate_3d(
@@ -78,6 +32,7 @@ def generate_3d(
     output_dir="output",
     mesh_pipeline=None,
     paint_pipeline=None,
+    local=False,
 ):
     """
     Generate a 3D asset from a text prompt or fetched image.
@@ -109,7 +64,8 @@ def generate_3d(
         )
         best_image = text_to_image(
             prompt=positive_prompt,
-            negative_prompt=negative_prompt
+            negative_prompt=negative_prompt,
+            local=local
         )  # returns PIL.Image directly
 
     elif method == "fathomnet":
@@ -151,7 +107,7 @@ def generate_3d(
 
     # ------------------ MESH GENERATION ------------------
     raw_mesh_path = os.path.join(output_dir, "mesh.glb")
-    mesh_proc = mp.Process(target=generate_mesh, args=(image, output_dir, mesh_pipeline))
+    mesh_proc = mp.Process(target=generate_mesh, args=(image, output_dir, mesh_pipeline, runtime))
     mesh_proc.start()
     mesh_proc.join()
     img_mesh = trimesh.load(raw_mesh_path)
@@ -181,6 +137,16 @@ def generate_3d(
         faces=np.asarray(simplified.triangles),
         process=False
     )
+
+    # Texture Generation
+    if paint_pipeline is None:
+        paint_pipeline = Hunyuan3DPaintPipeline.from_pretrained(
+            'tencent/Hunyuan3D-2',
+            subfolder='hunyuan3d-paint-v2-0-turbo',
+            runtime=runtime
+        )
+        paint_pipeline.enable_model_cpu_offload(device="cuda")
+        print("Paint model loaded successfully")
 
     # ------------------ PAINTING ------------------
     painted_mesh = paint_pipeline(decimated_mesh, image=image)
